@@ -58,7 +58,7 @@ def initialize_gemini(history=None):
         genai.configure(api_key=api_key)
 
         # Create model
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-2.5-flash')
 
         # Start chat session with history
         if history:
