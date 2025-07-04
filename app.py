@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from PIL import Image
+from flask_migrate import Migrate
 
 # Import models first
 from models import db, User, Conversation, Message, UserProfile, UserMemory, TaskAutomation, EmotionLog, ProactiveTask
@@ -28,7 +29,7 @@ logging.basicConfig(level=logging.INFO)
 
 # --- Enhanced PostgreSQL Database Configuration ---
 def configure_database():
-    """Configure database with enhanced PostgreSQL support"""
+    """Configure database with enhanced PostgreSQL support and migration handling"""
     DATABASE_URL = os.environ.get('DATABASE_URL')
 
     if DATABASE_URL:
@@ -76,6 +77,9 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize db with app
 db.init_app(app)
+
+# --- Database Migration Setup ---
+migrate = Migrate(app, db)
 
 # --- Login Manager Setup ---
 login_manager = LoginManager()
@@ -195,6 +199,91 @@ def save_message_to_db(conversation_id, role, content):
         logging.error(f"Error saving message: {e}")
         db.session.rollback()
         raise
+
+
+# --- Database Migration Functions ---
+def check_database_migration():
+    """Check if database migration is needed"""
+    try:
+        # Test if all required tables exist
+        inspector = db.inspect(db.engine)
+        existing_tables = inspector.get_table_names()
+
+        required_tables = ['user', 'conversation', 'message', 'user_profile',
+                           'user_memory', 'task_automation', 'emotion_log', 'proactive_task']
+
+        missing_tables = [table for table in required_tables if table not in existing_tables]
+
+        if missing_tables:
+            logging.warning(f"Missing database tables: {missing_tables}")
+            return True
+
+        return False
+    except Exception as e:
+        logging.error(f"Error checking database migration: {e}")
+        return True
+
+
+def perform_database_migration():
+    """Perform database migration with data preservation"""
+    try:
+        logging.info("Starting database migration...")
+
+        # Check if we're migrating from SQLite to PostgreSQL
+        is_postgres = 'postgresql' in app.config['SQLALCHEMY_DATABASE_URI']
+
+        if is_postgres:
+            logging.info("Migrating to PostgreSQL database")
+
+            # Create all tables
+            db.create_all()
+
+            # If migrating from SQLite, you would add data migration logic here
+            # For now, we'll just create the schema
+
+        else:
+            logging.info("Creating SQLite database tables")
+            db.create_all()
+
+        # Verify migration success
+        db.session.execute(db.text('SELECT 1'))
+        logging.info("Database migration completed successfully")
+
+    except Exception as e:
+        logging.error(f"Database migration failed: {e}")
+        raise
+
+
+def initialize_database_with_migration():
+    """Initialize database with migration support"""
+    try:
+        with app.app_context():
+            # Check if migration is needed
+            needs_migration = check_database_migration()
+
+            if needs_migration:
+                perform_database_migration()
+            else:
+                logging.info("Database schema is up to date")
+
+            # Test database connection
+            db.session.execute(db.text('SELECT 1'))
+
+            # Log database info
+            if os.environ.get('DATABASE_URL'):
+                logging.info("Using PostgreSQL database (Production)")
+            else:
+                logging.info("Using SQLite database (Development)")
+
+    except Exception as e:
+        logging.error(f"Database initialization error: {e}")
+        # Fallback: try basic table creation
+        try:
+            db.create_all()
+            logging.info("Fallback: Basic database tables created")
+        except Exception as fallback_error:
+            logging.error(f"Fallback database creation failed: {fallback_error}")
+            raise
 
 
 # --- Enhanced Session Validation Middleware ---
@@ -623,14 +712,20 @@ def health_check():
         # Test database connection
         db.session.execute(db.text('SELECT 1'))
         db_status = 'connected'
+        db_type = 'PostgreSQL' if 'postgresql' in app.config['SQLALCHEMY_DATABASE_URI'] else 'SQLite'
     except Exception as e:
         logging.error(f"Database health check failed: {e}")
         db_status = f'error: {str(e)}'
+        db_type = 'unknown'
 
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
-        'database': db_status,
+        'database': {
+            'status': db_status,
+            'type': db_type,
+            'url_configured': bool(os.environ.get('DATABASE_URL'))
+        },
         'utils_available': UTILS_AVAILABLE,
         'environment': os.environ.get('FLASK_ENV', 'development')
     }), 200
@@ -675,32 +770,8 @@ def internal_error(error):
         return '<h1>500 - Internal Server Error</h1>', 500
 
 
-# --- Enhanced Database Initialization ---
-def initialize_database():
-    """Initialize database with enhanced error handling"""
-    try:
-        with app.app_context():
-            # Create all tables
-            db.create_all()
-
-            # Test database connection
-            db.session.execute(db.text('SELECT 1'))
-
-            logging.info("Database tables created and connection verified successfully")
-
-            # Log database info
-            if os.environ.get('DATABASE_URL'):
-                logging.info("Using PostgreSQL database (Production)")
-            else:
-                logging.info("Using SQLite database (Development)")
-
-    except Exception as e:
-        logging.error(f"Database initialization error: {e}")
-        raise
-
-
-# Initialize database
-initialize_database()
+# --- Initialize Database with Migration Support ---
+initialize_database_with_migration()
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))

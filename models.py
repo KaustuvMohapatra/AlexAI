@@ -5,10 +5,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 db = SQLAlchemy()
 
+
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
-    password_hash = db.Column(db.String(150), nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)  # FIXED: Increased length
     conversations = db.relationship('Conversation', foreign_keys='Conversation.user_id',
                                     primaryjoin='User.id == Conversation.user_id', lazy=True,
                                     cascade="all, delete-orphan")
@@ -19,12 +20,14 @@ class User(UserMixin, db.Model):
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
+
 class Conversation(db.Model):
     __bind_key__ = 'chats'
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(100), default="New Conversation")
     user_id = db.Column(db.Integer, nullable=False)
     messages = db.relationship('Message', backref='conversation', lazy=True, cascade="all, delete-orphan")
+
 
 class Message(db.Model):
     __bind_key__ = 'chats'
@@ -33,6 +36,7 @@ class Message(db.Model):
     content = db.Column(db.Text, nullable=False)
     conversation_id = db.Column(db.Integer, db.ForeignKey('conversation.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 
 class UserProfile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -43,6 +47,7 @@ class UserProfile(db.Model):
     break_interval = db.Column(db.Integer, default=60)
     preferences = db.Column(db.JSON)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 
 class UserMemory(db.Model):
     __bind_key__ = 'chats'
@@ -55,6 +60,7 @@ class UserMemory(db.Model):
     last_accessed = db.Column(db.DateTime, default=datetime.utcnow)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+
 class TaskAutomation(db.Model):
     __bind_key__ = 'chats'
     id = db.Column(db.Integer, primary_key=True)
@@ -66,6 +72,7 @@ class TaskAutomation(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_used = db.Column(db.DateTime)
 
+
 class EmotionLog(db.Model):
     __bind_key__ = 'chats'
     id = db.Column(db.Integer, primary_key=True)
@@ -73,6 +80,7 @@ class EmotionLog(db.Model):
     conversation_id = db.Column(db.Integer, db.ForeignKey('conversation.id'))
     emotion_scores = db.Column(db.JSON)
     detected_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 
 class ProactiveTask(db.Model):
     __bind_key__ = 'chats'
