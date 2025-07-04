@@ -8,7 +8,7 @@ db = SQLAlchemy()
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(150), unique=True, nullable=False)
+    username = db.Column(db.String(255), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)  # FIXED: Increased length
     conversations = db.relationship('Conversation', foreign_keys='Conversation.user_id',
                                     primaryjoin='User.id == Conversation.user_id', lazy=True,
