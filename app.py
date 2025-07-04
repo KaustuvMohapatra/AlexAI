@@ -22,29 +22,57 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['WTF_CSRF_TIME_LIMIT'] = None
 
 logging.basicConfig(level=logging.INFO)
 
-# --- Database Configuration ---
-DATABASE_URL = os.environ.get('DATABASE_URL')
-if DATABASE_URL:
-    # Railway PostgreSQL
-    if DATABASE_URL.startswith('postgres://'):
-        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
-    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-    app.config['SQLALCHEMY_BINDS'] = {'chats': DATABASE_URL}
-else:
-    # Local development
-    basedir = os.path.abspath(os.path.dirname(__file__))
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'users.db')
-    app.config['SQLALCHEMY_BINDS'] = {'chats': 'sqlite:///' + os.path.join(basedir, 'chats.db')}
 
+# --- Enhanced PostgreSQL Database Configuration ---
+def configure_database():
+    """Configure database with enhanced PostgreSQL support"""
+    DATABASE_URL = os.environ.get('DATABASE_URL')
+
+    if DATABASE_URL:
+        # Production: Railway PostgreSQL
+        logging.info("Configuring PostgreSQL database for production")
+
+        # Handle Railway's postgres:// URL format
+        if DATABASE_URL.startswith('postgres://'):
+            DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+            logging.info("Converted postgres:// to postgresql:// URL format")
+
+        # PostgreSQL configuration
+        app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+        app.config['SQLALCHEMY_BINDS'] = {'chats': DATABASE_URL}
+
+        # Enhanced PostgreSQL engine options
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+            'pool_size': 10,
+            'pool_recycle': 120,
+            'pool_pre_ping': True,
+            'max_overflow': 20,
+            'pool_timeout': 30,
+            'echo': False  # Set to True for SQL debugging
+        }
+
+        logging.info("PostgreSQL database configured successfully")
+
+    else:
+        # Development: SQLite
+        logging.info("Configuring SQLite database for development")
+        basedir = os.path.abspath(os.path.dirname(__file__))
+        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'users.db')
+        app.config['SQLALCHEMY_BINDS'] = {'chats': 'sqlite:///' + os.path.join(basedir, 'chats.db')}
+
+        # SQLite engine options
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+            'pool_pre_ping': True,
+            'pool_recycle': 300,
+        }
+
+
+# Configure database
+configure_database()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_pre_ping': True,
-    'pool_recycle': 300,
-}
 
 # Initialize db with app
 db.init_app(app)
@@ -68,6 +96,7 @@ try:
     from utils.automation_handler import TaskAutomationManager
 
     UTILS_AVAILABLE = True
+    logging.info("All utility modules loaded successfully")
 except ImportError as e:
     logging.warning(f"Some utility modules not found: {e}")
     UTILS_AVAILABLE = False
@@ -99,41 +128,53 @@ except ImportError as e:
 
 
     class MemoryManager:
-        def __init__(self, user_id): self.user_id = user_id
+        def __init__(self, user_id):
+            self.user_id = user_id
 
-        def retrieve_relevant_memories(self, query, limit=10): return []
+        def retrieve_relevant_memories(self, query, limit=10):
+            return []
 
-        def store_memory(self, memory_type, key, value, importance=1.0): pass
+        def store_memory(self, memory_type, key, value, importance=1.0):
+            pass
 
 
     class EmotionAnalyzer:
-        def analyze_emotion(self, text, user_id, conversation_id): return {'neutral': 1.0}
+        def analyze_emotion(self, text, user_id, conversation_id):
+            return {'neutral': 1.0}
 
-        def get_emotion_trend(self, user_id, hours): return []
+        def get_emotion_trend(self, user_id, hours):
+            return []
 
 
     class ProactiveAssistant:
-        def __init__(self, user_id): self.user_id = user_id
+        def __init__(self, user_id):
+            self.user_id = user_id
 
-        def generate_proactive_suggestions(self, context): return []
+        def generate_proactive_suggestions(self, context):
+            return []
 
 
     class TaskAutomationManager:
-        def __init__(self, user_id): self.user_id = user_id
+        def __init__(self, user_id):
+            self.user_id = user_id
 
-        def check_triggers(self, text): return []
+        def check_triggers(self, text):
+            return []
 
-        def execute_actions(self, actions): return []
+        def execute_actions(self, actions):
+            return []
 
-        def create_automation(self, trigger, actions): return 1
+        def create_automation(self, trigger, actions):
+            return 1
 
-        def get_automation_statistics(self): return {'total': 0, 'active': 0}
+        def get_automation_statistics(self):
+            return {'total': 0, 'active': 0}
 
 
 @login_manager.user_loader
 def load_user(user_id):
     try:
-        # Force fresh query to avoid caching issues
+        # Enhanced user loading with better error handling
         user = db.session.execute(
             db.select(User).where(User.id == int(user_id))
         ).scalar_one_or_none()
@@ -144,21 +185,24 @@ def load_user(user_id):
 
 
 def save_message_to_db(conversation_id, role, content):
+    """Enhanced message saving with transaction management"""
     try:
         message = Message(role=role, content=content, conversation_id=conversation_id)
         db.session.add(message)
         db.session.commit()
+        logging.debug(f"Message saved: {role} in conversation {conversation_id}")
     except Exception as e:
         logging.error(f"Error saving message: {e}")
         db.session.rollback()
+        raise
 
 
-# --- Fixed Session Validation Middleware ---
+# --- Enhanced Session Validation Middleware ---
 @app.before_request
 def validate_session():
     """Enhanced session validation that doesn't interfere with logout"""
     # Skip validation for static files and auth routes
-    if request.endpoint in ['static', 'login', 'register', 'logout', 'force_logout', 'health_check']:
+    if request.endpoint in ['static', 'login', 'register', 'logout', 'force_logout', 'health_check', 'favicon']:
         return
 
     # Skip validation for API routes that don't require auth
@@ -283,7 +327,7 @@ def register():
     return render_template('register.html')
 
 
-# --- Fixed Logout Route ---
+# --- Enhanced Logout Route ---
 @app.route('/logout')
 @login_required
 def logout():
@@ -424,7 +468,8 @@ def chat():
 
                 # Memory retrieval
                 relevant_memories = memory_manager.retrieve_relevant_memories(user_prompt)
-                memory_context = "\n".join([f"{m.key}: {m.value}" for m in relevant_memories])
+                memory_context = "\n".join(
+                    [f"{getattr(m, 'key', '')}: {getattr(m, 'value', '')}" for m in relevant_memories])
 
                 # Proactive suggestions
                 proactive_suggestions = proactive_assistant.generate_proactive_suggestions({
@@ -449,7 +494,8 @@ def chat():
                 # Initialize Gemini
                 chat_session = initialize_gemini(history=history)
                 if not chat_session and UTILS_AVAILABLE:
-                    raise ConnectionError("Failed to initialize Gemini session.")
+                    yield f"data: {json.dumps({'text': 'I apologize, but I am currently unable to connect to my AI service. Please check your API configuration and try again.'})}\n\n"
+                    return
 
                 # Prepare enhanced prompt
                 enhanced_prompt = user_prompt
@@ -572,11 +618,21 @@ def auth_status():
 
 @app.route('/health')
 def health_check():
-    """Health check endpoint"""
+    """Enhanced health check endpoint with database connectivity test"""
+    try:
+        # Test database connection
+        db.session.execute(db.text('SELECT 1'))
+        db_status = 'connected'
+    except Exception as e:
+        logging.error(f"Database health check failed: {e}")
+        db_status = f'error: {str(e)}'
+
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
-        'utils_available': UTILS_AVAILABLE
+        'database': db_status,
+        'utils_available': UTILS_AVAILABLE,
+        'environment': os.environ.get('FLASK_ENV', 'development')
     }), 200
 
 
@@ -619,13 +675,32 @@ def internal_error(error):
         return '<h1>500 - Internal Server Error</h1>', 500
 
 
-# --- Database Initialization ---
-with app.app_context():
+# --- Enhanced Database Initialization ---
+def initialize_database():
+    """Initialize database with enhanced error handling"""
     try:
-        db.create_all()
-        logging.info("Database tables created successfully")
+        with app.app_context():
+            # Create all tables
+            db.create_all()
+
+            # Test database connection
+            db.session.execute(db.text('SELECT 1'))
+
+            logging.info("Database tables created and connection verified successfully")
+
+            # Log database info
+            if os.environ.get('DATABASE_URL'):
+                logging.info("Using PostgreSQL database (Production)")
+            else:
+                logging.info("Using SQLite database (Development)")
+
     except Exception as e:
-        logging.error(f"Database creation error: {e}")
+        logging.error(f"Database initialization error: {e}")
+        raise
+
+
+# Initialize database
+initialize_database()
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
