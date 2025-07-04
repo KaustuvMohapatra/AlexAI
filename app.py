@@ -50,9 +50,9 @@ def initialize_gemini(history=None):
         import google.generativeai as genai
 
         # Configure Gemini API
-        api_key = os.environ.get('GEMINI_API_KEY')
+        api_key = os.environ.get('GOOGLE_API_KEY')
         if not api_key:
-            logging.error("GEMINI_API_KEY not found in environment variables")
+            logging.error("GOOGLE_API_KEY not found in environment variables")
             return None
 
         genai.configure(api_key=api_key)
