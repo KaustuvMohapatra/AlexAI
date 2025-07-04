@@ -2,39 +2,50 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Alex - Your AI Assistant</title>
+    <meta name="theme-color" content="#bb86fc">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Alex AI">
+
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark-dimmed.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <!-- PWA icons -->
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icon-192.png') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icon-32.png') }}">
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
 </head>
 <body>
     <div class="main-container">
-        <!-- Sidebar for Conversations -->
+        <!-- Mobile-optimized sidebar -->
         <div class="sidebar">
             <div class="sidebar-header">
                 <h3>Conversations</h3>
-                <a href="{{ url_for('index') }}" class="new-chat-button" title="New Chat">+</a>
+                <a href="{{ url_for('index') }}" class="new-chat-button" title="New Chat" aria-label="Start new conversation">+</a>
             </div>
             <div class="conversation-list">
                 {% for conv in conversations %}
                     <a href="{{ url_for('load_conversation', conversation_id=conv.id) }}"
-                       class="conversation-item {% if conv.id == active_conversation.id %}active{% endif %}">
+                       class="conversation-item {% if conv.id == active_conversation.id %}active{% endif %}"
+                       aria-label="Load conversation: {{ conv.title or 'New Conversation' }}">
                         {{ conv.title or "New Conversation" }}
                     </a>
                 {% endfor %}
             </div>
             <div class="sidebar-footer">
                 <span class="username">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                         <path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-5.5-2.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0ZM10 12a5.99 5.99 0 0 0-4.793 2.39A6.483 6.483 0 0 0 10 16.5a6.483 6.483 0 0 0 4.793-2.11A5.99 5.99 0 0 0 10 12Z" clip-rule="evenodd" />
                     </svg>
                     {{ current_user.username }}
                 </span>
-                <a href="{{ url_for('logout') }}" class="logout-button" title="Logout">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                <a href="{{ url_for('logout') }}" class="logout-button" title="Logout" aria-label="Logout">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                         <path fill-rule="evenodd" d="M3 4.25A2.25 2.25 0 0 1 5.25 2h5.5A2.25 2.25 0 0 1 13 4.25v2a.75.75 0 0 1-1.5 0v-2a.75.75 0 0 0-.75-.75h-5.5a.75.75 0 0 0-.75.75v11.5c0 .414.336.75.75.75h5.5a.75.75 0 0 0 .75-.75v-2a.75.75 0 0 1 1.5 0v2A2.25 2.25 0 0 1 10.75 18h-5.5A2.25 2.25 0 0 1 3 15.75V4.25Z" clip-rule="evenodd" />
                         <path fill-rule="evenodd" d="M16.72 9.22a.75.75 0 0 1 1.06 0l.75.75a.75.75 0 0 1 0 1.06l-.75.75a.75.75 0 0 1-1.06 0l-1.47-1.47-1.47 1.47a.75.75 0 1 1-1.06-1.06l1.47-1.47-1.47-1.47a.75.75 0 0 1 1.06-1.06l1.47 1.47 1.47-1.47Z" clip-rule="evenodd" />
                     </svg>
@@ -42,82 +53,76 @@
             </div>
         </div>
 
-        <!-- Main Chat Container -->
+        <!-- Main chat container -->
         <div class="chat-container">
-            <!-- Enhanced header structure with controls container -->
             <div class="chat-header">
                 <div class="header-controls">
                     <div class="left-controls">
-                        <!-- Speech/TTS Toggle (Left side) -->
-                        <button id="tts-toggle" class="control-button" title="Toggle Text-to-Speech">
+                        <button id="tts-toggle" class="control-button" title="Toggle Text-to-Speech" aria-label="Toggle text to speech">
                             <span id="tts-icon">🔇</span>
                         </button>
                     </div>
 
                     <div class="header-title">
                         <h1>Alex</h1>
-                        <p>Your AI-powered search assistant</p>
+                        <p>Your AI-powered assistant</p>
                     </div>
 
                     <div class="right-controls">
-                        <!-- Theme Toggle -->
-                        <button id="theme-toggle" class="control-button" title="Toggle Theme">
+                        <button id="theme-toggle" class="control-button" title="Toggle Theme" aria-label="Toggle dark/light theme">
                             <span id="theme-icon">🌙</span>
                         </button>
-                        <!-- Quick Logout Button -->
-                        <a href="{{ url_for('logout') }}" class="control-button logout-control" title="Logout">
+                        <a href="{{ url_for('logout') }}" class="control-button logout-control" title="Logout" aria-label="Logout">
                             🚪
                         </a>
                     </div>
                 </div>
             </div>
 
-            <div id="chat-box" class="chat-box">
-                <!-- If the conversation is empty, show the welcome message -->
+            <div id="chat-box" class="chat-box" role="log" aria-live="polite" aria-label="Chat conversation">
                 {% if not active_conversation.messages %}
                     <div class="welcome-message">Hello! How can I help you today? Ask me anything, or try uploading an image.</div>
                 {% else %}
-                    <!-- Otherwise, loop through the real messages from the database -->
                     {% for message in active_conversation.messages %}
-                        <div class="message {{ 'user-message' if message.role == 'user' else 'bot-message' }}">
+                        <div class="message {{ 'user-message' if message.role == 'user' else 'bot-message' }}" role="article">
                             <div class="message-content">{{ message.content | safe }}</div>
                         </div>
                     {% endfor %}
                 {% endif %}
             </div>
 
-            <div id="thinking-indicator" class="thinking-indicator" style="display: none;">
+            <div id="thinking-indicator" class="thinking-indicator" style="display: none;" aria-label="AI is thinking">
                 <div class="dot"></div><div class="dot"></div><div class="dot"></div>
             </div>
 
             <div class="chat-input-area">
                 <div id="stop-button-container" style="display: none;">
-                    <button id="stop-button">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="stop-icon">
+                    <button id="stop-button" aria-label="Stop AI response generation">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="stop-icon" aria-hidden="true">
                             <path d="M5.25 3A2.25 2.25 0 0 0 3 5.25v9.5A2.25 2.25 0 0 0 5.25 17h9.5A2.25 2.25 0 0 0 17 14.75v-9.5A2.25 2.25 0 0 0 14.75 3h-9.5Z" />
                         </svg>
                         Stop Generating
                     </button>
                 </div>
 
-                <form id="chat-form" class="chat-form">
+                <form id="chat-form" class="chat-form" role="form" aria-label="Send message form">
                     <input type="hidden" id="conversation-id" value="{{ active_conversation.id }}">
-                    <input type="file" id="image-upload-input" accept="image/*" style="display: none;">
+                    <input type="file" id="image-upload-input" accept="image/*" style="display: none;" aria-label="Upload image">
 
-                    <button type="button" id="attach-button" title="Attach Image">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <button type="button" id="attach-button" title="Attach Image" aria-label="Attach image file">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                             <path fill-rule="evenodd" d="M15.621 4.379a2.25 2.25 0 0 1 0 3.182l-5.5 5.5a2.25 2.25 0 0 1-3.182 0l-5.5-5.5a2.25 2.25 0 0 1 3.182-3.182l5.5 5.5a.75.75 0 0 0 1.06-1.06l-5.5-5.5a3.75 3.75 0 1 0-5.304 5.304l5.5 5.5a3.75 3.75 0 0 0 5.304 0l5.5-5.5a.75.75 0 0 0-1.06-1.06Z" clip-rule="evenodd" />
                         </svg>
                     </button>
 
-                    <input type="text" id="user-input" placeholder="Ask about an image or enter a prompt..." autocomplete="off">
+                    <textarea id="user-input" placeholder="Type your message..." autocomplete="off" rows="1" aria-label="Type your message"></textarea>
 
-                    <button type="button" id="mic-button" title="Activate Voice">
+                    <button type="button" id="mic-button" title="Voice Input" aria-label="Start voice input">
                         🎙️
                     </button>
 
-                    <button type="submit" id="send-button">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="send-icon">
+                    <button type="submit" id="send-button" aria-label="Send message">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="send-icon" aria-hidden="true">
                             <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
                         </svg>
                     </button>
@@ -125,11 +130,12 @@
 
                 <div id="image-preview-container" style="display: none;">
                     <img id="image-preview" src="#" alt="Image preview"/>
-                    <button id="remove-image-button">×</button>
+                    <button id="remove-image-button" aria-label="Remove image">×</button>
                 </div>
             </div>
         </div>
     </div>
+
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
