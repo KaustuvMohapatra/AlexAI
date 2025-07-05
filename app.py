@@ -194,9 +194,9 @@ def configure_database():
             DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
             logging.info("Converted postgres:// to postgresql:// URL format")
 
-        # PostgreSQL configuration with Railway optimizations
+        # PostgreSQL configuration - SINGLE DATABASE
         app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-        app.config['SQLALCHEMY_BINDS'] = {'chats': DATABASE_URL}
+        # REMOVED: app.config['SQLALCHEMY_BINDS'] = {'chats': DATABASE_URL}
 
         # Railway-optimized engine options
         if environment == 'railway':
@@ -235,14 +235,13 @@ def configure_database():
         sqlite_path = os.path.join(basedir, 'app_data.db')
 
         app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{sqlite_path}'
-        app.config['SQLALCHEMY_BINDS'] = {'chats': f'sqlite:///{sqlite_path}'}
+        # REMOVED: app.config['SQLALCHEMY_BINDS'] = {'chats': f'sqlite:///{sqlite_path}'}
 
         # SQLite engine options
         app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
             'pool_pre_ping': True,
             'pool_recycle': 300,
         }
-
 
 # Configure database
 configure_database()
