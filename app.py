@@ -2,6 +2,7 @@ import os
 import logging
 import json
 import io
+import re
 from datetime import datetime, timedelta
 from flask import Flask, Response, render_template, request, jsonify, redirect, url_for, session, flash
 from dotenv import load_dotenv
@@ -25,6 +26,140 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 logging.basicConfig(level=logging.INFO)
+
+
+# --- Validation Helper Functions ---
+def validate_username(username):
+    """Enhanced username validation with detailed error messages"""
+    errors = []
+
+    if not username:
+        errors.append({
+            'field': 'username',
+            'message': 'Username is required!',
+            'code': 'REQUIRED'
+        })
+        return errors
+
+    username = username.strip()
+
+    if len(username) < 3:
+        errors.append({
+            'field': 'username',
+            'message': 'Username must be at least 3 characters long!',
+            'code': 'TOO_SHORT'
+        })
+
+    if len(username) > 50:
+        errors.append({
+            'field': 'username',
+            'message': 'Username must be less than 50 characters long!',
+            'code': 'TOO_LONG'
+        })
+
+    # Check for valid characters (alphanumeric and underscore only)
+    if not re.match(r'^[a-zA-Z0-9_]+$', username):
+        errors.append({
+            'field': 'username',
+            'message': 'Username can only contain letters, numbers, and underscores!',
+            'code': 'INVALID_CHARACTERS'
+        })
+
+    # Check if username starts with a letter
+    if not username[0].isalpha():
+        errors.append({
+            'field': 'username',
+            'message': 'Username must start with a letter!',
+            'code': 'INVALID_START'
+        })
+
+    return errors
+
+
+def validate_password(password):
+    """Enhanced password validation with detailed error messages"""
+    errors = []
+
+    if not password:
+        errors.append({
+            'field': 'password',
+            'message': 'Password is required!',
+            'code': 'REQUIRED'
+        })
+        return errors
+
+    if len(password) < 6:
+        errors.append({
+            'field': 'password',
+            'message': 'Password must be at least 6 characters long!',
+            'code': 'TOO_SHORT'
+        })
+
+    if len(password) > 128:
+        errors.append({
+            'field': 'password',
+            'message': 'Password must be less than 128 characters long!',
+            'code': 'TOO_LONG'
+        })
+
+    # Check for at least one letter
+    if not re.search(r'[A-Za-z]', password):
+        errors.append({
+            'field': 'password',
+            'message': 'Password must contain at least one letter!',
+            'code': 'NO_LETTER'
+        })
+
+    # Check for at least one number
+    if not re.search(r'[0-9]', password):
+        errors.append({
+            'field': 'password',
+            'message': 'Password must contain at least one number!',
+            'code': 'NO_NUMBER'
+        })
+
+    # Optional: Check for special characters (uncomment if needed)
+    # if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+    #     errors.append({
+    #         'field': 'password',
+    #         'message': 'Password must contain at least one special character!',
+    #         'code': 'NO_SPECIAL'
+    #     })
+
+    return errors
+
+
+def validate_form_data(username, password, check_existing_user=False):
+    """Comprehensive form validation"""
+    errors = []
+
+    # Validate username
+    username_errors = validate_username(username)
+    errors.extend(username_errors)
+
+    # Validate password
+    password_errors = validate_password(password)
+    errors.extend(password_errors)
+
+    # Check if username already exists (for registration)
+    if check_existing_user and username and len(username) >= 3:
+        try:
+            existing_user = User.query.filter_by(username=username.strip()).first()
+            if existing_user:
+                errors.append({
+                    'field': 'username',
+                    'message': 'Username already exists. Please choose a different one!',
+                    'code': 'ALREADY_EXISTS'
+                })
+        except Exception as e:
+            logging.error(f"Error checking existing user: {e}")
+            errors.append({
+                'field': 'general',
+                'message': 'Database error occurred. Please try again.',
+                'code': 'DATABASE_ERROR'
+            })
+
+    return errors
 
 
 # --- Enhanced PostgreSQL Database Configuration ---
@@ -234,13 +369,10 @@ def perform_database_migration():
 
         if is_postgres:
             logging.info("Migrating to PostgreSQL database")
-
             # Create all tables
             db.create_all()
-
             # If migrating from SQLite, you would add data migration logic here
             # For now, we'll just create the schema
-
         else:
             logging.info("Creating SQLite database tables")
             db.create_all()
@@ -291,11 +423,12 @@ def initialize_database_with_migration():
 def validate_session():
     """Enhanced session validation that doesn't interfere with logout"""
     # Skip validation for static files and auth routes
-    if request.endpoint in ['static', 'login', 'register', 'logout', 'force_logout', 'health_check', 'favicon']:
+    if request.endpoint in ['static', 'login', 'register', 'logout', 'force_logout', 'health_check', 'favicon',
+                            'validate_field']:
         return
 
     # Skip validation for API routes that don't require auth
-    if request.path.startswith('/api/auth/status'):
+    if request.path.startswith('/api/auth/status') or request.path.startswith('/api/validate'):
         return
 
     if current_user.is_authenticated:
@@ -318,19 +451,39 @@ def validate_session():
         session['last_activity'] = datetime.utcnow().isoformat()
 
 
-# --- Authentication Routes ---
+# --- Enhanced Authentication Routes ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
 
     if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '')
+        # Handle both form data and JSON requests
+        if request.is_json:
+            data = request.get_json()
+            username = data.get('username', '').strip()
+            password = data.get('password', '')
+        else:
+            username = request.form.get('username', '').strip()
+            password = request.form.get('password', '')
 
-        if not username or not password:
-            flash('Please enter both username and password.', 'error')
-            return render_template('login.html', error="Please fill in all fields.")
+        # Validate input
+        validation_errors = validate_form_data(username, password, check_existing_user=False)
+
+        if validation_errors:
+            error_response = {
+                'success': False,
+                'errors': validation_errors,
+                'message': validation_errors[0]['message']
+            }
+
+            if request.is_json:
+                return jsonify(error_response), 400
+            else:
+                flash(validation_errors[0]['message'], 'error')
+                return render_template('login.html',
+                                       error=validation_errors[0]['message'],
+                                       validation_errors=validation_errors)
 
         try:
             user = User.query.filter_by(username=username).first()
@@ -344,19 +497,46 @@ def login():
                 session['login_time'] = datetime.utcnow().isoformat()
                 session['last_activity'] = datetime.utcnow().isoformat()
 
-                flash(f'Welcome back, {user.username}!', 'success')
+                success_message = f'Welcome back, {user.username}!'
                 logging.info(f"User {user.username} logged in successfully")
 
-                next_page = request.args.get('next')
-                return redirect(next_page) if next_page else redirect(url_for('index'))
+                if request.is_json:
+                    next_page = request.json.get('next') or url_for('index')
+                    return jsonify({
+                        'success': True,
+                        'message': success_message,
+                        'redirect': next_page
+                    })
+                else:
+                    flash(success_message, 'success')
+                    next_page = request.args.get('next')
+                    return redirect(next_page) if next_page else redirect(url_for('index'))
             else:
-                flash('Invalid username or password.', 'error')
+                error_msg = 'Invalid username or password!'
                 logging.warning(f"Failed login attempt for username: {username}")
-                return render_template('login.html', error="Invalid username or password.")
+
+                if request.is_json:
+                    return jsonify({
+                        'success': False,
+                        'field': 'password',
+                        'message': error_msg
+                    }), 401
+                else:
+                    flash(error_msg, 'error')
+                    return render_template('login.html', error=error_msg)
+
         except Exception as e:
             logging.error(f"Login error: {e}")
-            flash('An error occurred during login. Please try again.', 'error')
-            return render_template('login.html', error="Login failed.")
+            error_msg = 'An error occurred during login. Please try again.'
+
+            if request.is_json:
+                return jsonify({
+                    'success': False,
+                    'message': error_msg
+                }), 500
+            else:
+                flash(error_msg, 'error')
+                return render_template('login.html', error=error_msg)
 
     return render_template('login.html')
 
@@ -367,53 +547,116 @@ def register():
         return redirect(url_for('index'))
 
     if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '')
+        # Handle both form data and JSON requests
+        if request.is_json:
+            data = request.get_json()
+            username = data.get('username', '').strip()
+            password = data.get('password', '')
+        else:
+            username = request.form.get('username', '').strip()
+            password = request.form.get('password', '')
 
-        # Enhanced validation
-        errors = []
+        # Comprehensive validation
+        validation_errors = validate_form_data(username, password, check_existing_user=True)
 
-        if not username:
-            errors.append('Username is required.')
-        elif len(username) < 3:
-            errors.append('Username must be at least 3 characters long.')
-        elif len(username) > 50:
-            errors.append('Username must be less than 50 characters.')
+        if validation_errors:
+            error_response = {
+                'success': False,
+                'errors': validation_errors,
+                'message': validation_errors[0]['message']
+            }
 
-        if not password:
-            errors.append('Password is required.')
-        elif len(password) < 6:
-            errors.append('Password must be at least 6 characters long.')
-
-        if errors:
-            for error in errors:
-                flash(error, 'error')
-            return render_template('register.html', errors=errors)
+            if request.is_json:
+                return jsonify(error_response), 400
+            else:
+                for error in validation_errors:
+                    flash(error['message'], 'error')
+                return render_template('register.html',
+                                       errors=validation_errors,
+                                       error=validation_errors[0]['message'])
 
         try:
-            # Check if username exists
-            existing_user = User.query.filter_by(username=username).first()
-            if existing_user:
-                flash('Username already exists. Please choose a different one.', 'error')
-                return render_template('register.html', error="Username already exists.")
-
             # Create new user
             new_user = User(username=username)
             new_user.set_password(password)
             db.session.add(new_user)
             db.session.commit()
 
-            flash('Registration successful! Please log in.', 'success')
+            success_message = 'Registration successful! Please log in.'
             logging.info(f"New user registered: {username}")
-            return redirect(url_for('login'))
+
+            if request.is_json:
+                return jsonify({
+                    'success': True,
+                    'message': success_message,
+                    'redirect': url_for('login')
+                })
+            else:
+                flash(success_message, 'success')
+                return redirect(url_for('login'))
 
         except Exception as e:
             db.session.rollback()
             logging.error(f"Registration error: {e}")
-            flash('Registration failed. Please try again.', 'error')
-            return render_template('register.html', error="Registration failed.")
+            error_msg = 'Registration failed. Please try again.'
+
+            if request.is_json:
+                return jsonify({
+                    'success': False,
+                    'message': error_msg
+                }), 500
+            else:
+                flash(error_msg, 'error')
+                return render_template('register.html', error=error_msg)
 
     return render_template('register.html')
+
+
+# --- Real-time Validation API ---
+@app.route('/api/validate/field', methods=['POST'])
+def validate_field():
+    """Real-time field validation API"""
+    try:
+        data = request.get_json()
+        field_name = data.get('field')
+        field_value = data.get('value', '')
+
+        errors = []
+
+        if field_name == 'username':
+            errors = validate_username(field_value)
+
+            # Check if username exists (only if no other errors)
+            if not errors and field_value:
+                try:
+                    existing_user = User.query.filter_by(username=field_value.strip()).first()
+                    if existing_user:
+                        errors.append({
+                            'field': 'username',
+                            'message': 'Username already exists!',
+                            'code': 'ALREADY_EXISTS'
+                        })
+                except Exception as e:
+                    logging.error(f"Error checking username availability: {e}")
+
+        elif field_name == 'password':
+            errors = validate_password(field_value)
+
+        return jsonify({
+            'valid': len(errors) == 0,
+            'errors': errors
+        })
+
+    except Exception as e:
+        logging.error(f"Field validation error: {e}")
+        return jsonify({
+            'valid': False,
+            'errors': [{
+                'field': 'general',
+                'message': 'Validation error occurred',
+                'code': 'VALIDATION_ERROR'
+            }]
+        }), 500
 
 
 # --- Enhanced Logout Route ---

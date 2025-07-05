@@ -1,4 +1,4 @@
-// Complete Mobile-Optimized script.js for AlexAI Assistant
+// Complete Mobile-Optimized script.js for AlexAI Assistant with Enhanced Validation
 
 // --- Global Variables ---
 let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
@@ -12,10 +12,420 @@ let proactiveSuggestions = [];
 let isListening = false;
 let recognition = null;
 
+// --- Validation Global Variables ---
+let validationPopup = null;
+let validationTimeouts = {};
+
 // --- DOM Elements (will be initialized on DOMContentLoaded) ---
 let conversationIdInput, chatForm, userInput, chatBox, stopButtonContainer, stopButton;
 let attachButton, imageUploadInput, imagePreviewContainer, imagePreview, removeImageButton;
 let themeToggle, themeIcon, ttsToggle, ttsIcon, clearChatButton, micButton, thinkingIndicator;
+
+// --- Enhanced Form Validation Functions ---
+function createValidationPopup() {
+    if (validationPopup) return validationPopup;
+
+    validationPopup = document.createElement('div');
+    validationPopup.className = 'validation-popup';
+    validationPopup.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: #ff4444;
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        z-index: 10000;
+        max-width: 300px;
+        text-align: center;
+        font-family: Arial, sans-serif;
+        display: none;
+        animation: popupSlide 0.3s ease-out;
+    `;
+
+    // Add CSS animation keyframes
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes popupSlide {
+            from {
+                opacity: 0;
+                transform: translate(-50%, -60%);
+            }
+            to {
+                opacity: 1;
+                transform: translate(-50%, -50%);
+            }
+        }
+        
+        .validation-popup {
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        
+        .validation-icon {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        
+        .validation-message {
+            margin-bottom: 15px;
+            font-weight: 500;
+        }
+        
+        .validation-close {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s ease;
+        }
+        
+        .validation-close:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .inline-error {
+            color: #ff4444;
+            font-size: 12px;
+            margin-top: 5px;
+            padding: 5px;
+            background: rgba(255, 68, 68, 0.1);
+            border-radius: 4px;
+            border-left: 3px solid #ff4444;
+            animation: errorSlide 0.3s ease-out;
+        }
+        
+        @keyframes errorSlide {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .validation-popup {
+                max-width: 90%;
+                padding: 15px;
+                font-size: 16px;
+            }
+            
+            .validation-close {
+                padding: 12px 20px;
+                font-size: 16px;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+
+    document.body.appendChild(validationPopup);
+    return validationPopup;
+}
+
+function showValidationError(message, targetElement = null) {
+    const popup = createValidationPopup();
+    popup.innerHTML = `
+        <div class="validation-icon">⚠️</div>
+        <div class="validation-message">${message}</div>
+        <button class="validation-close" onclick="hideValidationError()">OK</button>
+    `;
+
+    popup.style.display = 'block';
+
+    // Add haptic feedback on mobile
+    if (navigator.vibrate && isMobile) {
+        navigator.vibrate([100, 50, 100]);
+    }
+
+    // Highlight the problematic field
+    if (targetElement) {
+        targetElement.style.borderColor = '#ff4444';
+        targetElement.style.boxShadow = '0 0 5px rgba(255, 68, 68, 0.5)';
+
+        // Remove highlight after 3 seconds
+        setTimeout(() => {
+            targetElement.style.borderColor = '';
+            targetElement.style.boxShadow = '';
+        }, 3000);
+    }
+
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+        hideValidationError();
+    }, 5000);
+}
+
+function hideValidationError() {
+    if (validationPopup) {
+        validationPopup.style.display = 'none';
+    }
+}
+
+// Real-time validation with server
+async function validateFieldWithServer(fieldName, fieldValue, fieldElement) {
+    try {
+        const response = await fetch('/api/validate/field', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                field: fieldName,
+                value: fieldValue
+            })
+        });
+
+        const data = await response.json();
+
+        if (!data.valid && data.errors.length > 0) {
+            showInlineError(fieldElement, data.errors[0].message);
+            return false;
+        } else {
+            clearFieldError(fieldElement);
+            return true;
+        }
+    } catch (error) {
+        console.error('Validation error:', error);
+        return true; // Don't block on network errors
+    }
+}
+
+function showInlineError(element, message) {
+    // Remove existing error message
+    const existingError = element.parentNode.querySelector('.inline-error');
+    if (existingError) {
+        existingError.remove();
+    }
+
+    // Create new error message
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'inline-error';
+    errorDiv.textContent = message;
+
+    // Insert after the input field
+    element.parentNode.insertBefore(errorDiv, element.nextSibling);
+
+    // Highlight the field
+    element.style.borderColor = '#ff4444';
+    element.style.backgroundColor = 'rgba(255, 68, 68, 0.05)';
+
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (errorDiv.parentNode) {
+            errorDiv.remove();
+        }
+        element.style.borderColor = '';
+        element.style.backgroundColor = '';
+    }, 5000);
+}
+
+function clearFieldError(field) {
+    const existingError = field.parentNode.querySelector('.inline-error');
+    if (existingError) {
+        existingError.remove();
+    }
+    field.style.borderColor = '';
+    field.style.backgroundColor = '';
+    field.style.boxShadow = '';
+}
+
+function clearValidationErrors(form) {
+    // Remove all inline errors
+    form.querySelectorAll('.inline-error').forEach(error => error.remove());
+
+    // Reset field styles
+    form.querySelectorAll('input').forEach(input => {
+        input.style.borderColor = '';
+        input.style.backgroundColor = '';
+        input.style.boxShadow = '';
+    });
+
+    // Hide popup
+    hideValidationError();
+}
+
+// Enhanced login form validation
+function setupLoginValidation() {
+    const loginForm = document.getElementById('login-form');
+    const usernameField = document.getElementById('username');
+    const passwordField = document.getElementById('password');
+
+    if (loginForm && usernameField && passwordField) {
+        // Real-time validation with debouncing
+        usernameField.addEventListener('input', () => {
+            clearTimeout(validationTimeouts.username);
+            validationTimeouts.username = setTimeout(() => {
+                const username = usernameField.value.trim();
+                if (username.length > 0) {
+                    validateFieldWithServer('username', username, usernameField);
+                } else {
+                    clearFieldError(usernameField);
+                }
+            }, 500);
+        });
+
+        passwordField.addEventListener('input', () => {
+            clearTimeout(validationTimeouts.password);
+            validationTimeouts.password = setTimeout(() => {
+                const password = passwordField.value;
+                if (password.length > 0) {
+                    validateFieldWithServer('password', password, passwordField);
+                } else {
+                    clearFieldError(passwordField);
+                }
+            }, 500);
+        });
+
+        // Form submission with enhanced validation
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const username = usernameField.value.trim();
+            const password = passwordField.value;
+
+            // Clear previous errors
+            clearValidationErrors(loginForm);
+
+            // Client-side validation first
+            if (!username) {
+                showValidationError('Username is required!', usernameField);
+                usernameField.focus();
+                return;
+            }
+
+            if (!password) {
+                showValidationError('Password is required!', passwordField);
+                passwordField.focus();
+                return;
+            }
+
+            // Submit to server
+            try {
+                const response = await fetch('/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Success - redirect
+                    window.location.href = data.redirect;
+                } else {
+                    // Handle validation errors
+                    if (data.errors) {
+                        data.errors.forEach(error => {
+                            const field = error.field === 'username' ? usernameField : passwordField;
+                            showInlineError(field, error.message);
+                        });
+                    } else {
+                        showValidationError(data.message || 'Login failed');
+                    }
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                showValidationError('Network error. Please check your connection and try again.');
+            }
+        });
+    }
+}
+
+// Enhanced registration form validation
+function setupRegistrationValidation() {
+    const registerForm = document.getElementById('register-form');
+    const usernameField = document.getElementById('username');
+    const passwordField = document.getElementById('password');
+
+    if (registerForm && usernameField && passwordField) {
+        // Real-time validation with debouncing
+        usernameField.addEventListener('input', () => {
+            clearTimeout(validationTimeouts.regUsername);
+            validationTimeouts.regUsername = setTimeout(() => {
+                const username = usernameField.value.trim();
+                if (username.length > 0) {
+                    validateFieldWithServer('username', username, usernameField);
+                } else {
+                    clearFieldError(usernameField);
+                }
+            }, 500);
+        });
+
+        passwordField.addEventListener('input', () => {
+            clearTimeout(validationTimeouts.regPassword);
+            validationTimeouts.regPassword = setTimeout(() => {
+                const password = passwordField.value;
+                if (password.length > 0) {
+                    validateFieldWithServer('password', password, passwordField);
+                } else {
+                    clearFieldError(passwordField);
+                }
+            }, 500);
+        });
+
+        // Form submission
+        registerForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const username = usernameField.value.trim();
+            const password = passwordField.value;
+
+            // Clear previous errors
+            clearValidationErrors(registerForm);
+
+            // Submit to server
+            try {
+                const response = await fetch('/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Success - show success message and redirect
+                    const popup = createValidationPopup();
+                    popup.innerHTML = `
+                        <div class="validation-icon">✅</div>
+                        <div class="validation-message">Registration successful! Redirecting to login...</div>
+                    `;
+                    popup.style.background = '#44ff44';
+                    popup.style.display = 'block';
+
+                    setTimeout(() => {
+                        window.location.href = data.redirect;
+                    }, 2000);
+                } else {
+                    // Handle validation errors
+                    if (data.errors) {
+                        data.errors.forEach(error => {
+                            const field = error.field === 'username' ? usernameField : passwordField;
+                            showInlineError(field, error.message);
+                        });
+                    } else {
+                        showValidationError(data.message || 'Registration failed');
+                    }
+                }
+            } catch (error) {
+                console.error('Registration error:', error);
+                showValidationError('Network error. Please check your connection and try again.');
+            }
+        });
+    }
+}
 
 // --- Mobile-Specific Functions ---
 function initializeMobileMenu() {
@@ -443,7 +853,7 @@ function setupEventListeners() {
     if (micButton) {
         micButton.addEventListener('click', () => {
             if (!recognition) {
-                alert('Speech recognition not supported in this browser.');
+                showValidationError('Speech recognition not supported in this browser.');
                 return;
             }
 
@@ -453,7 +863,7 @@ function setupEventListeners() {
                 if (!isGenerating) {
                     recognition.start();
                 } else {
-                    alert('Please wait for the current response to complete.');
+                    showValidationError('Please wait for the current response to complete.');
                 }
             }
         });
@@ -469,12 +879,12 @@ function setupEventListeners() {
             const file = e.target.files[0];
             if (file) {
                 if (!file.type.startsWith('image/')) {
-                    alert('Please select a valid image file.');
+                    showValidationError('Please select a valid image file.');
                     return;
                 }
 
                 if (file.size > 5 * 1024 * 1024) {
-                    alert('Image file too large. Please select an image under 5MB.');
+                    showValidationError('Image file too large. Please select an image under 5MB.');
                     return;
                 }
 
@@ -581,8 +991,10 @@ function setupEventListeners() {
 
                 if (!response.ok) {
                     if (response.status === 401 || response.status === 403) {
-                        alert('Your session has expired. Please log in again.');
-                        performLogout(true);
+                        showValidationError('Your session has expired. Please log in again.');
+                        setTimeout(() => {
+                            performLogout(true);
+                        }, 2000);
                         return;
                     }
                     throw new Error(`HTTP error! status: ${response.status}`);
@@ -768,9 +1180,15 @@ document.addEventListener("DOMContentLoaded", () => {
     initializePage();
     setupEventListeners();
 
+    // Setup form validation
+    setupLoginValidation();
+    setupRegistrationValidation();
+
     // Expose logout function globally
     window.performLogout = performLogout;
 });
 
-// Make acceptSuggestion globally available
+// Make functions globally available
 window.acceptSuggestion = acceptSuggestion;
+window.hideValidationError = hideValidationError;
+window.showValidationError = showValidationError;
