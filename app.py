@@ -3,6 +3,7 @@ import logging
 import json
 import io
 import re
+import sys
 from datetime import datetime, timedelta
 from flask import Flask, Response, render_template, request, jsonify, redirect, url_for, session, flash
 from dotenv import load_dotenv
@@ -18,14 +19,32 @@ from models import db, User, Conversation, Message, UserProfile, UserMemory, Tas
 load_dotenv()
 app = Flask(__name__)
 
-# Enhanced session configuration for proper logout
+# Enhanced session configuration for Railway deployment
 app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'a-very-secret-key-for-production')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
+
+# Railway-specific session configuration
+if os.environ.get('RAILWAY_ENVIRONMENT'):
+    app.config['SESSION_COOKIE_SECURE'] = True
+    app.config['SESSION_COOKIE_DOMAIN'] = None
+else:
+    app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
+
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 logging.basicConfig(level=logging.INFO)
+
+
+# --- Environment Detection ---
+def get_environment():
+    """Detect current environment"""
+    if os.environ.get('RAILWAY_ENVIRONMENT'):
+        return 'railway'
+    elif os.environ.get('DATABASE_URL'):
+        return 'production'
+    else:
+        return 'development'
 
 
 # --- Validation Helper Functions ---
@@ -118,14 +137,6 @@ def validate_password(password):
             'code': 'NO_NUMBER'
         })
 
-    # Optional: Check for special characters (uncomment if needed)
-    # if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
-    #     errors.append({
-    #         'field': 'password',
-    #         'message': 'Password must contain at least one special character!',
-    #         'code': 'NO_SPECIAL'
-    #     })
-
     return errors
 
 
@@ -162,42 +173,69 @@ def validate_form_data(username, password, check_existing_user=False):
     return errors
 
 
-# --- Enhanced PostgreSQL Database Configuration ---
+# --- Enhanced PostgreSQL Database Configuration for Railway ---
 def configure_database():
-    """Configure database with enhanced PostgreSQL support and migration handling"""
+    """Enhanced database configuration with Railway-specific optimizations"""
     DATABASE_URL = os.environ.get('DATABASE_URL')
+    environment = get_environment()
+
+    logging.info(f"Running in {environment} environment")
 
     if DATABASE_URL:
-        # Production: Railway PostgreSQL
         logging.info("Configuring PostgreSQL database for production")
+
+        # Validate DATABASE_URL format
+        if not DATABASE_URL.startswith(('postgres://', 'postgresql://')):
+            logging.error(f"Invalid DATABASE_URL format: {DATABASE_URL[:50]}...")
+            raise ValueError("DATABASE_URL must start with postgres:// or postgresql://")
 
         # Handle Railway's postgres:// URL format
         if DATABASE_URL.startswith('postgres://'):
             DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
             logging.info("Converted postgres:// to postgresql:// URL format")
 
-        # PostgreSQL configuration
+        # PostgreSQL configuration with Railway optimizations
         app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
         app.config['SQLALCHEMY_BINDS'] = {'chats': DATABASE_URL}
 
-        # Enhanced PostgreSQL engine options
-        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-            'pool_size': 10,
-            'pool_recycle': 120,
-            'pool_pre_ping': True,
-            'max_overflow': 20,
-            'pool_timeout': 30,
-            'echo': False  # Set to True for SQL debugging
-        }
+        # Railway-optimized engine options
+        if environment == 'railway':
+            app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+                'pool_size': 5,
+                'pool_recycle': 300,
+                'pool_pre_ping': True,
+                'max_overflow': 10,
+                'pool_timeout': 30,
+                'connect_args': {
+                    'connect_timeout': 10,
+                    'application_name': 'AlexAI_Railway',
+                    'sslmode': 'require'
+                }
+            }
+        else:
+            # Standard production settings
+            app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+                'pool_size': 10,
+                'pool_recycle': 120,
+                'pool_pre_ping': True,
+                'max_overflow': 20,
+                'pool_timeout': 30,
+                'connect_args': {
+                    'connect_timeout': 10,
+                    'application_name': 'AlexAI_Production'
+                }
+            }
 
         logging.info("PostgreSQL database configured successfully")
 
     else:
-        # Development: SQLite
-        logging.info("Configuring SQLite database for development")
+        # Development: SQLite fallback
+        logging.info("No DATABASE_URL found, configuring SQLite for development")
         basedir = os.path.abspath(os.path.dirname(__file__))
-        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'users.db')
-        app.config['SQLALCHEMY_BINDS'] = {'chats': 'sqlite:///' + os.path.join(basedir, 'chats.db')}
+        sqlite_path = os.path.join(basedir, 'app_data.db')
+
+        app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{sqlite_path}'
+        app.config['SQLALCHEMY_BINDS'] = {'chats': f'sqlite:///{sqlite_path}'}
 
         # SQLite engine options
         app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
@@ -317,6 +355,9 @@ def load_user(user_id):
         user = db.session.execute(
             db.select(User).where(User.id == int(user_id))
         ).scalar_one_or_none()
+
+        # Add debug logging for user loading
+        logging.debug(f"Loading user {user_id}: {'Found' if user else 'Not found'}")
         return user
     except Exception as e:
         logging.error(f"Error loading user {user_id}: {e}")
@@ -336,10 +377,14 @@ def save_message_to_db(conversation_id, role, content):
         raise
 
 
-# --- Database Migration Functions ---
+# --- Enhanced Database Migration Functions ---
 def check_database_migration():
-    """Check if database migration is needed"""
+    """Check if database migration is needed with proper error handling"""
     try:
+        # Ensure we're in application context
+        if not hasattr(app, 'app_context') or not app.app_context:
+            raise RuntimeError("No application context available")
+
         # Test if all required tables exist
         inspector = db.inspect(db.engine)
         existing_tables = inspector.get_table_names()
@@ -360,75 +405,171 @@ def check_database_migration():
 
 
 def perform_database_migration():
-    """Perform database migration with data preservation"""
+    """Perform database migration with enhanced error handling"""
     try:
         logging.info("Starting database migration...")
 
-        # Check if we're migrating from SQLite to PostgreSQL
-        is_postgres = 'postgresql' in app.config['SQLALCHEMY_DATABASE_URI']
+        # Ensure we're in application context
+        if not hasattr(app, 'app_context') or not app.app_context:
+            raise RuntimeError("No application context available")
 
-        if is_postgres:
-            logging.info("Migrating to PostgreSQL database")
-            # Create all tables
-            db.create_all()
-            # If migrating from SQLite, you would add data migration logic here
-            # For now, we'll just create the schema
-        else:
-            logging.info("Creating SQLite database tables")
-            db.create_all()
+        # Create all tables
+        db.create_all()
 
         # Verify migration success
         db.session.execute(db.text('SELECT 1'))
+        db.session.commit()
+
         logging.info("Database migration completed successfully")
 
     except Exception as e:
         logging.error(f"Database migration failed: {e}")
+        db.session.rollback()
         raise
 
 
 def initialize_database_with_migration():
-    """Initialize database with migration support"""
+    """Initialize database with proper application context and error handling"""
     try:
         with app.app_context():
+            # Test database connection first
+            try:
+                db.session.execute(db.text('SELECT 1'))
+                logging.info("Database connection successful")
+            except Exception as conn_error:
+                logging.error(f"Database connection failed: {conn_error}")
+
+                # Check if we're in development and should fall back to SQLite
+                if not os.environ.get('DATABASE_URL'):
+                    logging.info("Falling back to SQLite for development")
+                    basedir = os.path.abspath(os.path.dirname(__file__))
+                    sqlite_path = os.path.join(basedir, 'emergency_fallback.db')
+                    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{sqlite_path}'
+                    app.config['SQLALCHEMY_BINDS'] = {'chats': f'sqlite:///{sqlite_path}'}
+
+                    # Reinitialize db with new config
+                    db.init_app(app)
+                else:
+                    raise conn_error
+
             # Check if migration is needed
             needs_migration = check_database_migration()
 
             if needs_migration:
+                logging.info("Performing database migration...")
                 perform_database_migration()
             else:
                 logging.info("Database schema is up to date")
 
-            # Test database connection
+            # Final connection test
             db.session.execute(db.text('SELECT 1'))
+            db.session.commit()
 
             # Log database info
-            if os.environ.get('DATABASE_URL'):
-                logging.info("Using PostgreSQL database (Production)")
-            else:
-                logging.info("Using SQLite database (Development)")
+            db_type = 'PostgreSQL' if 'postgresql' in app.config['SQLALCHEMY_DATABASE_URI'] else 'SQLite'
+            logging.info(f"Database initialization completed successfully using {db_type}")
 
     except Exception as e:
-        logging.error(f"Database initialization error: {e}")
-        # Fallback: try basic table creation
+        logging.error(f"Database initialization failed: {e}")
+
+        # Emergency fallback to SQLite
         try:
-            db.create_all()
-            logging.info("Fallback: Basic database tables created")
+            logging.info("Attempting emergency fallback to SQLite...")
+            basedir = os.path.abspath(os.path.dirname(__file__))
+            sqlite_path = os.path.join(basedir, 'emergency_fallback.db')
+
+            app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{sqlite_path}'
+            app.config['SQLALCHEMY_BINDS'] = {'chats': f'sqlite:///{sqlite_path}'}
+
+            # Reinitialize with SQLite
+            with app.app_context():
+                db.create_all()
+                logging.info("Emergency SQLite fallback successful")
+
         except Exception as fallback_error:
-            logging.error(f"Fallback database creation failed: {fallback_error}")
-            raise
+            logging.critical(f"Emergency fallback failed: {fallback_error}")
+            raise RuntimeError("Complete database initialization failure") from e
+
+
+# --- Debug Routes (Remove in production) ---
+@app.route('/debug/users')
+def debug_users():
+    """Debug route to check user count"""
+    try:
+        users = User.query.all()
+        user_list = [{'id': u.id, 'username': u.username} for u in users]
+        return jsonify({
+            'total_users': len(users),
+            'users': user_list
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+
+@app.route('/debug/create-test-user')
+def create_test_user():
+    """Debug route to create a test user"""
+    try:
+        # Check if test user already exists
+        existing_user = User.query.filter_by(username='admin').first()
+        if existing_user:
+            return jsonify({'message': 'Test user already exists', 'username': 'admin'})
+
+        # Create test user
+        test_user = User(username='admin')
+        test_user.set_password('password123')
+        db.session.add(test_user)
+        db.session.commit()
+
+        return jsonify({
+            'message': 'Test user created successfully',
+            'username': 'admin',
+            'password': 'password123'
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Error creating test user: {e}'})
+
+
+@app.route('/debug/db-status')
+def debug_db_status():
+    """Debug route to check database status"""
+    try:
+        # Test database connection
+        db.session.execute(db.text('SELECT 1'))
+
+        # Count tables
+        inspector = db.inspect(db.engine)
+        tables = inspector.get_table_names()
+
+        # Count users
+        user_count = User.query.count()
+
+        return jsonify({
+            'database_connected': True,
+            'tables': tables,
+            'user_count': user_count,
+            'database_url': app.config['SQLALCHEMY_DATABASE_URI'][:50] + '...',
+            'environment': get_environment()
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
 
 # --- Enhanced Session Validation Middleware ---
 @app.before_request
 def validate_session():
     """Enhanced session validation that doesn't interfere with logout"""
-    # Skip validation for static files and auth routes
-    if request.endpoint in ['static', 'login', 'register', 'logout', 'force_logout', 'health_check', 'favicon',
-                            'validate_field']:
+    # Skip validation for static files, auth routes, and debug routes
+    skip_endpoints = ['static', 'login', 'register', 'logout', 'force_logout', 'health_check',
+                      'favicon', 'validate_field', 'debug_users', 'create_test_user', 'debug_db_status']
+
+    if request.endpoint in skip_endpoints:
         return
 
     # Skip validation for API routes that don't require auth
-    if request.path.startswith('/api/auth/status') or request.path.startswith('/api/validate'):
+    if request.path.startswith('/api/auth/status') or request.path.startswith(
+            '/api/validate') or request.path.startswith('/debug'):
         return
 
     if current_user.is_authenticated:
@@ -467,6 +608,9 @@ def login():
             username = request.form.get('username', '').strip()
             password = request.form.get('password', '')
 
+        # Add debug logging
+        logging.info(f"Login attempt for username: {username}")
+
         # Validate input
         validation_errors = validate_form_data(username, password, check_existing_user=False)
 
@@ -487,6 +631,8 @@ def login():
 
         try:
             user = User.query.filter_by(username=username).first()
+            logging.info(f"User query result: {'Found' if user else 'Not found'}")
+
             if user and user.check_password(password):
                 # Clear any existing session data
                 session.clear()
@@ -513,7 +659,7 @@ def login():
                     return redirect(next_page) if next_page else redirect(url_for('index'))
             else:
                 error_msg = 'Invalid username or password!'
-                logging.warning(f"Failed login attempt for username: {username}")
+                logging.warning(f"Login failed for username: {username}")
 
                 if request.is_json:
                     return jsonify({
@@ -970,7 +1116,7 @@ def health_check():
             'url_configured': bool(os.environ.get('DATABASE_URL'))
         },
         'utils_available': UTILS_AVAILABLE,
-        'environment': os.environ.get('FLASK_ENV', 'development')
+        'environment': get_environment()
     }), 200
 
 
@@ -1013,9 +1159,23 @@ def internal_error(error):
         return '<h1>500 - Internal Server Error</h1>', 500
 
 
-# --- Initialize Database with Migration Support ---
-initialize_database_with_migration()
-
+# --- Main Application Entry Point ---
 if __name__ == "__main__":
+    # Initialize database only when running the app directly
+    try:
+        initialize_database_with_migration()
+        logging.info("Application startup successful")
+    except Exception as e:
+        logging.critical(f"Application startup failed: {e}")
+        sys.exit(1)
+
     port = int(os.environ.get('PORT', 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
+else:
+    # For production deployments (gunicorn, etc.)
+    try:
+        initialize_database_with_migration()
+        logging.info("Production application initialization successful")
+    except Exception as e:
+        logging.critical(f"Production application initialization failed: {e}")
+        # Don't exit in production, let the deployment handle the error
