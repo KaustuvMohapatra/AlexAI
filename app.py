@@ -173,9 +173,9 @@ def validate_form_data(username, password, check_existing_user=False):
     return errors
 
 
-# --- Enhanced PostgreSQL Database Configuration for Railway ---
+# --- FIXED PostgreSQL Database Configuration for Railway ---
 def configure_database():
-    """Enhanced database configuration with Railway-specific optimizations"""
+    """FIXED database configuration with Railway-specific optimizations"""
     DATABASE_URL = os.environ.get('DATABASE_URL')
     environment = get_environment()
 
@@ -194,9 +194,9 @@ def configure_database():
             DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
             logging.info("Converted postgres:// to postgresql:// URL format")
 
-        # PostgreSQL configuration - SINGLE DATABASE
+        # PostgreSQL configuration - SINGLE DATABASE (FIXED)
         app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-        # REMOVED: app.config['SQLALCHEMY_BINDS'] = {'chats': DATABASE_URL}
+        # COMPLETELY REMOVED BINDS - this was causing the issue
 
         # Railway-optimized engine options
         if environment == 'railway':
@@ -235,13 +235,14 @@ def configure_database():
         sqlite_path = os.path.join(basedir, 'app_data.db')
 
         app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{sqlite_path}'
-        # REMOVED: app.config['SQLALCHEMY_BINDS'] = {'chats': f'sqlite:///{sqlite_path}'}
+        # NO BINDS FOR SQLITE EITHER
 
         # SQLite engine options
         app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
             'pool_pre_ping': True,
             'pool_recycle': 300,
         }
+
 
 # Configure database
 configure_database()
@@ -376,7 +377,7 @@ def save_message_to_db(conversation_id, role, content):
         raise
 
 
-# --- Enhanced Database Migration Functions ---
+# --- FIXED Database Migration Functions ---
 def check_database_migration():
     """Check if database migration is needed with proper error handling"""
     try:
@@ -420,7 +421,7 @@ def perform_database_migration():
 
 
 def initialize_database_with_migration():
-    """Initialize database with proper application context and error handling"""
+    """FIXED database initialization with proper application context and error handling"""
     try:
         with app.app_context():
             # Test database connection first
@@ -436,7 +437,7 @@ def initialize_database_with_migration():
                     basedir = os.path.abspath(os.path.dirname(__file__))
                     sqlite_path = os.path.join(basedir, 'emergency_fallback.db')
                     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{sqlite_path}'
-                    app.config['SQLALCHEMY_BINDS'] = {'chats': f'sqlite:///{sqlite_path}'}
+                    # REMOVED BINDS CONFIGURATION - this was causing issues
 
                     # Reinitialize db with new config
                     db.init_app(app)
@@ -470,7 +471,7 @@ def initialize_database_with_migration():
             sqlite_path = os.path.join(basedir, 'emergency_fallback.db')
 
             app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{sqlite_path}'
-            app.config['SQLALCHEMY_BINDS'] = {'chats': f'sqlite:///{sqlite_path}'}
+            # NO BINDS IN FALLBACK EITHER
 
             # Reinitialize with SQLite
             with app.app_context():
@@ -482,158 +483,232 @@ def initialize_database_with_migration():
             raise RuntimeError("Complete database initialization failure") from e
 
 
-# --- User Management Routes (SOLUTION TO YOUR PROBLEM) ---
+# --- ENHANCED User Management Routes with Better Error Handling ---
 @app.route('/admin/create-users')
 def create_default_users():
-    """Create default users for the application"""
+    """Create default users for the application with enhanced error handling"""
     try:
-        users_created = []
+        with app.app_context():  # Ensure proper application context
+            users_created = []
+            errors = []
 
-        # Create default users
-        default_users = [
-            {'username': 'admin', 'password': 'admin123'},
-            {'username': 'demo1', 'password': 'demo123'},
-            {'username': 'johnny', 'password': 'johnny123'},
-            {'username': 'test', 'password': 'test123'}
-        ]
+            # Create default users
+            default_users = [
+                {'username': 'admin', 'password': 'admin123'},
+                {'username': 'demo1', 'password': 'demo123'},
+                {'username': 'johnny', 'password': 'johnny123'},
+                {'username': 'test', 'password': 'test123'}
+            ]
 
-        for user_data in default_users:
-            existing_user = User.query.filter_by(username=user_data['username']).first()
-            if not existing_user:
-                new_user = User(username=user_data['username'])
-                new_user.set_password(user_data['password'])
-                db.session.add(new_user)
-                users_created.append(user_data['username'])
+            for user_data in default_users:
+                try:
+                    existing_user = User.query.filter_by(username=user_data['username']).first()
+                    if not existing_user:
+                        new_user = User(username=user_data['username'])
+                        new_user.set_password(user_data['password'])
+                        db.session.add(new_user)
+                        users_created.append(user_data['username'])
+                        logging.info(f"Created user: {user_data['username']}")
+                    else:
+                        logging.info(f"User {user_data['username']} already exists")
+                except Exception as user_error:
+                    logging.error(f"Error creating user {user_data['username']}: {user_error}")
+                    errors.append(f"Failed to create {user_data['username']}: {str(user_error)}")
 
-        db.session.commit()
+            # Commit all changes at once
+            if users_created:
+                db.session.commit()
+                logging.info(f"Successfully committed {len(users_created)} users to database")
 
-        return jsonify({
-            'message': 'Default users created successfully',
-            'users_created': users_created,
-            'total_users': User.query.count(),
-            'login_instructions': 'You can now login with any of the created users'
-        })
+            return jsonify({
+                'message': 'User creation process completed',
+                'users_created': users_created,
+                'errors': errors,
+                'total_users': User.query.count(),
+                'login_instructions': 'You can now login with any of the created users'
+            })
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': f'Error creating users: {e}'}), 500
+        logging.error(f"Critical error in create_default_users: {e}")
+        return jsonify({'error': f'Critical error creating users: {e}'}), 500
 
 
 @app.route('/admin/users')
 def list_users():
-    """List all users in the system"""
+    """List all users in the system with enhanced error handling"""
     try:
-        users = User.query.all()
-        user_list = []
+        with app.app_context():
+            users = User.query.all()
+            user_list = []
 
-        for user in users:
-            user_list.append({
-                'id': user.id,
-                'username': user.username,
-                'conversations': len(user.conversations),
-                'has_profile': user.profile is not None
+            for user in users:
+                try:
+                    user_list.append({
+                        'id': user.id,
+                        'username': user.username,
+                        'conversations': len(user.conversations) if user.conversations else 0,
+                        'has_profile': user.profile is not None,
+                        'created_at': user.created_at.isoformat() if hasattr(user,
+                                                                             'created_at') and user.created_at else None
+                    })
+                except Exception as user_error:
+                    logging.error(f"Error processing user {user.id}: {user_error}")
+                    user_list.append({
+                        'id': user.id,
+                        'username': user.username,
+                        'error': str(user_error)
+                    })
+
+            return jsonify({
+                'total_users': len(users),
+                'users': user_list,
+                'database_type': 'PostgreSQL' if 'postgresql' in app.config['SQLALCHEMY_DATABASE_URI'] else 'SQLite'
             })
 
-        return jsonify({
-            'total_users': len(users),
-            'users': user_list
-        })
-
     except Exception as e:
+        logging.error(f"Error listing users: {e}")
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/admin/create-user/<username>/<password>')
 def create_single_user(username, password):
-    """Create a single user manually"""
+    """Create a single user manually with enhanced error handling"""
     try:
-        # Validate input
-        if len(username) < 3 or len(password) < 6:
-            return jsonify({'error': 'Username must be 3+ chars, password must be 6+ chars'}), 400
+        with app.app_context():
+            # Validate input
+            if len(username) < 3 or len(password) < 6:
+                return jsonify({'error': 'Username must be 3+ chars, password must be 6+ chars'}), 400
 
-        existing_user = User.query.filter_by(username=username).first()
-        if existing_user:
-            return jsonify({'error': f'User {username} already exists'}), 400
+            existing_user = User.query.filter_by(username=username).first()
+            if existing_user:
+                return jsonify({'error': f'User {username} already exists'}), 400
 
-        new_user = User(username=username)
-        new_user.set_password(password)
-        db.session.add(new_user)
-        db.session.commit()
+            # Create new user with detailed logging
+            logging.info(f"Creating new user: {username}")
+            new_user = User(username=username)
+            new_user.set_password(password)
 
-        return jsonify({
-            'message': f'User {username} created successfully',
-            'username': username,
-            'password': password,
-            'user_id': new_user.id
-        })
+            db.session.add(new_user)
+            db.session.flush()  # Flush to get the ID
+            user_id = new_user.id
+
+            db.session.commit()
+            logging.info(f"Successfully created user {username} with ID {user_id}")
+
+            return jsonify({
+                'message': f'User {username} created successfully',
+                'username': username,
+                'password': password,
+                'user_id': user_id,
+                'database_type': 'PostgreSQL' if 'postgresql' in app.config['SQLALCHEMY_DATABASE_URI'] else 'SQLite'
+            })
 
     except Exception as e:
         db.session.rollback()
+        logging.error(f"Error creating user {username}: {e}")
         return jsonify({'error': f'Error creating user: {e}'}), 500
 
 
-# --- Debug Routes ---
+# --- ENHANCED Debug Routes ---
 @app.route('/debug/users')
 def debug_users():
-    """Debug route to check user count"""
+    """Debug route to check user count with enhanced error handling"""
     try:
-        users = User.query.all()
-        user_list = [{'id': u.id, 'username': u.username} for u in users]
-        return jsonify({
-            'total_users': len(users),
-            'users': user_list
-        })
+        with app.app_context():
+            users = User.query.all()
+            user_list = []
+
+            for u in users:
+                try:
+                    user_list.append({
+                        'id': u.id,
+                        'username': u.username,
+                        'password_hash_length': len(u.password_hash) if u.password_hash else 0
+                    })
+                except Exception as user_error:
+                    logging.error(f"Error processing user in debug: {user_error}")
+                    user_list.append({'error': str(user_error)})
+
+            return jsonify({
+                'total_users': len(users),
+                'users': user_list,
+                'database_url': app.config['SQLALCHEMY_DATABASE_URI'][:50] + '...',
+                'environment': get_environment()
+            })
     except Exception as e:
+        logging.error(f"Error in debug_users: {e}")
         return jsonify({'error': str(e)})
 
 
 @app.route('/debug/create-test-user')
 def create_test_user():
-    """Debug route to create a test user"""
+    """Debug route to create a test user with enhanced error handling"""
     try:
-        # Check if test user already exists
-        existing_user = User.query.filter_by(username='admin').first()
-        if existing_user:
-            return jsonify({'message': 'Test user already exists', 'username': 'admin'})
+        with app.app_context():
+            # Check if test user already exists
+            existing_user = User.query.filter_by(username='admin').first()
+            if existing_user:
+                return jsonify({
+                    'message': 'Test user already exists',
+                    'username': 'admin',
+                    'user_id': existing_user.id
+                })
 
-        # Create test user
-        test_user = User(username='admin')
-        test_user.set_password('password123')
-        db.session.add(test_user)
-        db.session.commit()
+            # Create test user with detailed logging
+            logging.info("Creating test user 'admin'")
+            test_user = User(username='admin')
+            test_user.set_password('password123')
 
-        return jsonify({
-            'message': 'Test user created successfully',
-            'username': 'admin',
-            'password': 'password123'
-        })
+            db.session.add(test_user)
+            db.session.flush()
+            user_id = test_user.id
+
+            db.session.commit()
+            logging.info(f"Test user created successfully with ID: {user_id}")
+
+            return jsonify({
+                'message': 'Test user created successfully',
+                'username': 'admin',
+                'password': 'password123',
+                'user_id': user_id
+            })
     except Exception as e:
         db.session.rollback()
+        logging.error(f"Error creating test user: {e}")
         return jsonify({'error': f'Error creating test user: {e}'})
 
 
 @app.route('/debug/db-status')
 def debug_db_status():
-    """Debug route to check database status"""
+    """Debug route to check database status with enhanced information"""
     try:
-        # Test database connection
-        db.session.execute(db.text('SELECT 1'))
+        with app.app_context():
+            # Test database connection
+            db.session.execute(db.text('SELECT 1'))
 
-        # Count tables
-        inspector = db.inspect(db.engine)
-        tables = inspector.get_table_names()
+            # Count tables
+            inspector = db.inspect(db.engine)
+            tables = inspector.get_table_names()
 
-        # Count users
-        user_count = User.query.count()
+            # Count users with error handling
+            try:
+                user_count = User.query.count()
+            except Exception as count_error:
+                logging.error(f"Error counting users: {count_error}")
+                user_count = f"Error: {count_error}"
 
-        return jsonify({
-            'database_connected': True,
-            'tables': tables,
-            'user_count': user_count,
-            'database_url': app.config['SQLALCHEMY_DATABASE_URI'][:50] + '...',
-            'environment': get_environment()
-        })
+            return jsonify({
+                'database_connected': True,
+                'tables': tables,
+                'user_count': user_count,
+                'database_url': app.config['SQLALCHEMY_DATABASE_URI'][:50] + '...',
+                'environment': get_environment(),
+                'sqlalchemy_binds': app.config.get('SQLALCHEMY_BINDS', 'Not configured'),
+                'engine_options': app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {})
+            })
     except Exception as e:
+        logging.error(f"Database status check failed: {e}")
         return jsonify({'error': str(e)})
 
 
@@ -676,7 +751,7 @@ def validate_session():
         session['last_activity'] = datetime.utcnow().isoformat()
 
 
-# --- Enhanced Authentication Routes ---
+# --- ENHANCED Authentication Routes ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
@@ -714,46 +789,47 @@ def login():
                                        validation_errors=validation_errors)
 
         try:
-            user = User.query.filter_by(username=username).first()
-            logging.info(f"User query result: {'Found' if user else 'Not found'}")
+            with app.app_context():  # Ensure proper application context
+                user = User.query.filter_by(username=username).first()
+                logging.info(f"User query result: {'Found' if user else 'Not found'}")
 
-            if user and user.check_password(password):
-                # Clear any existing session data
-                session.clear()
+                if user and user.check_password(password):
+                    # Clear any existing session data
+                    session.clear()
 
-                # Login user
-                login_user(user, remember=True)
-                session.permanent = True
-                session['login_time'] = datetime.utcnow().isoformat()
-                session['last_activity'] = datetime.utcnow().isoformat()
+                    # Login user
+                    login_user(user, remember=True)
+                    session.permanent = True
+                    session['login_time'] = datetime.utcnow().isoformat()
+                    session['last_activity'] = datetime.utcnow().isoformat()
 
-                success_message = f'Welcome back, {user.username}!'
-                logging.info(f"User {user.username} logged in successfully")
+                    success_message = f'Welcome back, {user.username}!'
+                    logging.info(f"User {user.username} logged in successfully")
 
-                if request.is_json:
-                    next_page = request.json.get('next') or url_for('index')
-                    return jsonify({
-                        'success': True,
-                        'message': success_message,
-                        'redirect': next_page
-                    })
+                    if request.is_json:
+                        next_page = request.json.get('next') or url_for('index')
+                        return jsonify({
+                            'success': True,
+                            'message': success_message,
+                            'redirect': next_page
+                        })
+                    else:
+                        flash(success_message, 'success')
+                        next_page = request.args.get('next')
+                        return redirect(next_page) if next_page else redirect(url_for('index'))
                 else:
-                    flash(success_message, 'success')
-                    next_page = request.args.get('next')
-                    return redirect(next_page) if next_page else redirect(url_for('index'))
-            else:
-                error_msg = 'Invalid username or password!'
-                logging.warning(f"Login failed for username: {username}")
+                    error_msg = 'Invalid username or password!'
+                    logging.warning(f"Login failed for username: {username}")
 
-                if request.is_json:
-                    return jsonify({
-                        'success': False,
-                        'field': 'password',
-                        'message': error_msg
-                    }), 401
-                else:
-                    flash(error_msg, 'error')
-                    return render_template('login.html', error=error_msg)
+                    if request.is_json:
+                        return jsonify({
+                            'success': False,
+                            'field': 'password',
+                            'message': error_msg
+                        }), 401
+                    else:
+                        flash(error_msg, 'error')
+                        return render_template('login.html', error=error_msg)
 
         except Exception as e:
             logging.error(f"Login error: {e}")
@@ -786,6 +862,9 @@ def register():
             username = request.form.get('username', '').strip()
             password = request.form.get('password', '')
 
+        # Add debug logging
+        logging.info(f"Registration attempt for username: {username}")
+
         # Comprehensive validation
         validation_errors = validate_form_data(username, password, check_existing_user=True)
 
@@ -806,28 +885,34 @@ def register():
                                        error=validation_errors[0]['message'])
 
         try:
-            # Create new user
-            new_user = User(username=username)
-            new_user.set_password(password)
-            db.session.add(new_user)
-            db.session.commit()
+            with app.app_context():  # Ensure proper application context
+                # Create new user with detailed logging
+                logging.info(f"Creating new user via registration: {username}")
+                new_user = User(username=username)
+                new_user.set_password(password)
 
-            success_message = 'Registration successful! Please log in.'
-            logging.info(f"New user registered: {username}")
+                db.session.add(new_user)
+                db.session.flush()
+                user_id = new_user.id
 
-            if request.is_json:
-                return jsonify({
-                    'success': True,
-                    'message': success_message,
-                    'redirect': url_for('login')
-                })
-            else:
-                flash(success_message, 'success')
-                return redirect(url_for('login'))
+                db.session.commit()
+                logging.info(f"Successfully registered user {username} with ID {user_id}")
+
+                success_message = 'Registration successful! Please log in.'
+
+                if request.is_json:
+                    return jsonify({
+                        'success': True,
+                        'message': success_message,
+                        'redirect': url_for('login')
+                    })
+                else:
+                    flash(success_message, 'success')
+                    return redirect(url_for('login'))
 
         except Exception as e:
             db.session.rollback()
-            logging.error(f"Registration error: {e}")
+            logging.error(f"Registration error for {username}: {e}")
             error_msg = 'Registration failed. Please try again.'
 
             if request.is_json:
@@ -859,13 +944,14 @@ def validate_field():
             # Check if username exists (only if no other errors)
             if not errors and field_value:
                 try:
-                    existing_user = User.query.filter_by(username=field_value.strip()).first()
-                    if existing_user:
-                        errors.append({
-                            'field': 'username',
-                            'message': 'Username already exists!',
-                            'code': 'ALREADY_EXISTS'
-                        })
+                    with app.app_context():
+                        existing_user = User.query.filter_by(username=field_value.strip()).first()
+                        if existing_user:
+                            errors.append({
+                                'field': 'username',
+                                'message': 'Username already exists!',
+                                'code': 'ALREADY_EXISTS'
+                            })
                 except Exception as e:
                     logging.error(f"Error checking username availability: {e}")
 
@@ -982,8 +1068,6 @@ def load_conversation(conversation_id):
         logging.error(f"Error loading conversation {conversation_id}: {e}")
         return redirect(url_for('index'))
 
-
-# [Rest of your existing routes remain the same...]
 
 @app.route('/health')
 def health_check():
