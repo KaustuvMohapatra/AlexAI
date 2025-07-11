@@ -16,6 +16,7 @@ class EmotionAnalyzer:
             'stressed', 'overwhelmed', 'anxious', 'worried', 'frustrated',
             'tired', 'exhausted', 'deadline', 'urgent', 'pressure'
         ]
+
         self.happiness_indicators = [
             'happy', 'excited', 'great', 'awesome', 'wonderful',
             'fantastic', 'amazing', 'love', 'perfect', 'excellent'
@@ -50,34 +51,48 @@ class EmotionAnalyzer:
         if total > 0:
             emotions = {k: v / total for k, v in emotions.items()}
 
-        # Store emotion log
-        emotion_log = EmotionLog(
-            user_id=user_id,
-            conversation_id=conversation_id,
-            emotion_scores=emotions
-        )
-        db.session.add(emotion_log)
-        db.session.commit()
+        # Store emotion log with CORRECT column name
+        try:
+            emotion_log = EmotionLog(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                emotions=emotions  # ✅ Changed from 'emotion_scores' to 'emotions'
+            )
+
+            db.session.add(emotion_log)
+            db.session.commit()
+
+        except Exception as e:
+            logging.error(f"Error storing emotion log: {e}")
+            db.session.rollback()
 
         return emotions
 
     def get_emotion_trend(self, user_id, hours=24):
         """Get recent emotion trends"""
         since = datetime.utcnow() - timedelta(hours=hours)
-        logs = EmotionLog.query.filter(
-            EmotionLog.user_id == user_id,
-            EmotionLog.detected_at >= since
-        ).all()
 
-        if not logs:
+        try:
+            logs = EmotionLog.query.filter(
+                EmotionLog.user_id == user_id,
+                EmotionLog.created_at >= since  # ✅ Changed from 'detected_at' to 'created_at'
+            ).all()
+
+            if not logs:
+                return {'happiness': 0.5, 'stress': 0.3, 'neutral': 0.2}
+
+            # Average emotions over time period
+            avg_emotions = {'happiness': 0, 'stress': 0, 'neutral': 0}
+            for log in logs:
+                # Access the emotions JSON field correctly
+                emotion_data = log.emotions if log.emotions else {}
+                for emotion, score in emotion_data.items():
+                    if emotion in avg_emotions:
+                        avg_emotions[emotion] += score
+
+            count = len(logs)
+            return {k: v / count for k, v in avg_emotions.items()}
+
+        except Exception as e:
+            logging.error(f"Error retrieving emotion trend: {e}")
             return {'happiness': 0.5, 'stress': 0.3, 'neutral': 0.2}
-
-        # Average emotions over time period
-        avg_emotions = {'happiness': 0, 'stress': 0, 'neutral': 0}
-        for log in logs:
-            for emotion, score in log.emotion_scores.items():
-                if emotion in avg_emotions:
-                    avg_emotions[emotion] += score
-
-        count = len(logs)
-        return {k: v / count for k, v in avg_emotions.items()}
