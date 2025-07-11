@@ -1160,7 +1160,7 @@ def chat():
                 if not conversation:
                     raise ValueError("Conversation not found inside generator.")
 
-                # Initialize AI components
+                # Initialize AI components with your utility modules
                 memory_manager = MemoryManager(user_id)
                 emotion_analyzer = EmotionAnalyzer()
                 proactive_assistant = ProactiveAssistant(user_id)
@@ -1168,13 +1168,42 @@ def chat():
 
                 is_first_exchange = len(conversation.messages) == 0
 
-                # Save user message first
+                # 1. EMOTION ANALYSIS - Stream emotion data
+                emotions = emotion_analyzer.analyze_emotion(user_prompt, user_id, conversation_id)
+                yield f"event: emotion\ndata: {json.dumps(emotions)}\n\n"
+
+                # 2. TASK AUTOMATION - Check for automation triggers
+                triggered_actions = automation_manager.check_triggers(user_prompt)
+                if triggered_actions:
+                    automation_results = automation_manager.execute_actions(triggered_actions)
+                    yield f"event: automation\ndata: {json.dumps(automation_results)}\n\n"
+
+                # 3. MEMORY RETRIEVAL - Get relevant context
+                relevant_memories = memory_manager.retrieve_relevant_memories(user_prompt)
+                memory_context = "\n".join(
+                    [f"{getattr(m, 'key', '')}: {getattr(m, 'value', '')}" for m in relevant_memories])
+
+                # 4. PROACTIVE SUGGESTIONS - Generate helpful suggestions
+                proactive_suggestions = proactive_assistant.generate_proactive_suggestions({
+                    'current_message': user_prompt,
+                    'emotions': emotions,
+                    'memories': relevant_memories
+                })
+
+                if proactive_suggestions:
+                    yield f"event: proactive\ndata: {json.dumps(proactive_suggestions)}\n\n"
+
+                # Save user message
                 save_message_to_db(conversation_id, 'user', user_prompt)
 
-                # Load conversation history
+                # 5. MEMORY STORAGE - Store important information
+                if any(keyword in user_prompt.lower() for keyword in ['remember', 'important', 'deadline', 'meeting', 'appointment']):
+                    memory_manager.store_memory('user_request', 'important_info', user_prompt, importance=1.5)
+
+                # Load conversation history for context
                 history = [{'role': msg.role, 'parts': [{'text': msg.content}]} for msg in conversation.messages[:-1]]
 
-                # Initialize Gemini with better error handling
+                # Initialize Gemini with enhanced error handling
                 chat_session = initialize_gemini(history=history)
                 if not chat_session:
                     error_msg = "AI service is currently unavailable. Please check your API configuration."
@@ -1182,19 +1211,45 @@ def chat():
                     save_message_to_db(conversation_id, 'model', error_msg)
                     return
 
-                # Prepare prompt parts
+                # 6. ENHANCED PROMPT PREPARATION - Add context and emotion awareness
+                enhanced_prompt = user_prompt
+
+                # Add memory context to prompt
+                if memory_context:
+                    context_prefix = f"[Context from previous conversations: {memory_context[:500]}...]\n[Current mood: {emotions}]\n\n"
+                    enhanced_prompt = context_prefix + enhanced_prompt
+
+                # Add emotional context
+                if emotions.get('stress', 0) > 0.6:
+                    enhanced_prompt += "\n\n[Note: User seems stressed, please be supportive and helpful.]"
+                elif emotions.get('happiness', 0) > 0.7:
+                    enhanced_prompt += "\n\n[Note: User is in a great mood today!]"
+                elif emotions.get('sadness', 0) > 0.6:
+                    enhanced_prompt += "\n\n[Note: User seems down, please be encouraging and empathetic.]"
+
+                # Prepare prompt parts for multimodal support
                 prompt_parts = []
                 if image_data:
                     try:
                         img = Image.open(io.BytesIO(image_data))
-                        prompt_parts.extend([user_prompt, img])
+                        prompt_parts.extend([enhanced_prompt, img])
+                        logging.info("Image processed successfully for multimodal input")
                     except Exception as img_error:
                         logging.error(f"Image processing error: {img_error}")
-                        prompt_parts.append(user_prompt)
+                        prompt_parts.append(enhanced_prompt)
+                elif is_realtime_query(user_prompt):
+                    # Use real-time search for current information
+                    context = fetch_realtime_info(user_prompt)
+                    prompt_parts.append(f"Real-time information: '{context}'. User question: '{enhanced_prompt}'")
+                    logging.info("Real-time information retrieved for query")
                 else:
-                    prompt_parts.append(user_prompt)
+                    prompt_parts.append(enhanced_prompt)
 
-                # Generate response with error handling
+                # 7. SENTIMENT ANALYSIS - Stream sentiment data
+                sentiment_scores = analyze_sentiment(user_prompt or " ")
+                yield f"event: sentiment\ndata: {json.dumps(sentiment_scores)}\n\n"
+
+                # 8. AI RESPONSE GENERATION - Stream the response
                 try:
                     stream_generator = get_response_stream(chat_session, prompt_parts)
                     for chunk_text in stream_generator:
@@ -1211,20 +1266,33 @@ def chat():
                 if full_bot_response:
                     save_message_to_db(conversation_id, 'model', full_bot_response)
 
-                # Update conversation title for first exchange
+                # 9. INTERACTION PATTERN STORAGE - Learn from the conversation
+                memory_manager.store_memory('interaction_pattern',
+                                            f"query_type_{datetime.now().strftime('%Y%m%d')}",
+                                            {
+                                                'query': user_prompt,
+                                                'response_length': len(full_bot_response),
+                                                'emotions': emotions,
+                                                'sentiment': sentiment_scores,
+                                                'had_automation': bool(triggered_actions),
+                                                'used_memory': bool(memory_context)
+                                            })
+
+                # 10. CONVERSATION TITLE GENERATION - For first exchange
                 if is_first_exchange and full_bot_response:
                     try:
                         title = get_conversation_title(user_prompt, full_bot_response)
                         if title:
                             conversation.title = title
                             db.session.commit()
+                            logging.info(f"Generated conversation title: {title}")
                     except Exception as title_error:
                         logging.error(f"Title generation error: {title_error}")
 
             except Exception as e:
                 logging.error(f"Error during response generation: {e}")
                 error_msg = "I apologize, but I encountered an error. Please try again."
-                yield f"data: {json.dumps({'text': error_msg})}\n\n"
+                yield f"event: error\ndata: {json.dumps({'error': 'A server error occurred.'})}\n\n"
                 save_message_to_db(conversation_id, 'model', error_msg)
 
     return Response(generate_and_save(), mimetype='text/event-stream')
