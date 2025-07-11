@@ -49,7 +49,7 @@ def get_environment():
 
 # --- Validation Helper Functions ---
 def validate_username(username):
-    """Enhanced username validation with detailed error messages"""
+    """Flexible username validation with minimal restrictions"""
     errors = []
 
     if not username:
@@ -62,41 +62,41 @@ def validate_username(username):
 
     username = username.strip()
 
-    if len(username) < 3:
+    # Minimum length check (reduced from 3 to 1)
+    if len(username) < 1:
         errors.append({
             'field': 'username',
-            'message': 'Username must be at least 3 characters long!',
+            'message': 'Username cannot be empty!',
             'code': 'TOO_SHORT'
         })
 
-    if len(username) > 50:
+    # Maximum length check (keep reasonable limit)
+    if len(username) > 100:  # Increased from 50 to 100
         errors.append({
             'field': 'username',
-            'message': 'Username must be less than 50 characters long!',
+            'message': 'Username must be less than 100 characters long!',
             'code': 'TOO_LONG'
         })
 
-    # Check for valid characters (alphanumeric and underscore only)
-    if not re.match(r'^[a-zA-Z0-9_]+$', username):
-        errors.append({
-            'field': 'username',
-            'message': 'Username can only contain letters, numbers, and underscores!',
-            'code': 'INVALID_CHARACTERS'
-        })
+    # Only restrict truly problematic characters
+    forbidden_chars = ['<', '>', '"', "'", '&', '\n', '\r', '\t']
+    for char in forbidden_chars:
+        if char in username:
+            errors.append({
+                'field': 'username',
+                'message': 'Username contains invalid characters!',
+                'code': 'INVALID_CHARACTERS'
+            })
+            break
 
-    # Check if username starts with a letter
-    if not username[0].isalpha():
-        errors.append({
-            'field': 'username',
-            'message': 'Username must start with a letter!',
-            'code': 'INVALID_START'
-        })
+    # Remove the "must start with letter" restriction
+    # Remove the alphanumeric-only restriction
 
     return errors
 
 
 def validate_password(password):
-    """Enhanced password validation with detailed error messages"""
+    """Relaxed password validation for better user experience"""
     errors = []
 
     if not password:
@@ -107,6 +107,7 @@ def validate_password(password):
         })
         return errors
 
+    # Only enforce reasonable length limits
     if len(password) < 6:
         errors.append({
             'field': 'password',
@@ -114,30 +115,19 @@ def validate_password(password):
             'code': 'TOO_SHORT'
         })
 
-    if len(password) > 128:
+    if len(password) > 256:  # Increased from 128 to 256
         errors.append({
             'field': 'password',
-            'message': 'Password must be less than 128 characters long!',
+            'message': 'Password must be less than 256 characters long!',
             'code': 'TOO_LONG'
         })
 
-    # Check for at least one letter
-    if not re.search(r'[A-Za-z]', password):
-        errors.append({
-            'field': 'password',
-            'message': 'Password must contain at least one letter!',
-            'code': 'NO_LETTER'
-        })
-
-    # Check for at least one number
-    if not re.search(r'[0-9]', password):
-        errors.append({
-            'field': 'password',
-            'message': 'Password must contain at least one number!',
-            'code': 'NO_NUMBER'
-        })
+    # Remove all character composition requirements
+    # No longer require letters or numbers
+    # Allow any characters including spaces, symbols, unicode, etc.
 
     return errors
+
 
 
 def validate_form_data(username, password, check_existing_user=False):
