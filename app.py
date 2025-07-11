@@ -1133,6 +1133,101 @@ def internal_error(error):
     except:
         return '<h1>500 - Internal Server Error</h1>', 500
 
+@app.route("/chat", methods=["POST"])
+@login_required
+def chat():
+    user_prompt = request.form.get("prompt", "")
+    image_file = request.files.get("image")
+    conversation_id = request.form.get("conversation_id", type=int)
+
+    image_data = image_file.read() if image_file else None
+
+    if not conversation_id:
+        return jsonify({"error": "Missing conversation ID."}), 400
+
+    user_id = current_user.id
+
+    # Verify conversation ownership
+    initial_conversation = db.session.get(Conversation, conversation_id)
+    if not initial_conversation or initial_conversation.user_id != user_id:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    def generate_and_save():
+        with app.app_context():
+            full_bot_response = ""
+            try:
+                conversation = db.session.get(Conversation, conversation_id)
+                if not conversation:
+                    raise ValueError("Conversation not found inside generator.")
+
+                # Initialize AI components
+                memory_manager = MemoryManager(user_id)
+                emotion_analyzer = EmotionAnalyzer()
+                proactive_assistant = ProactiveAssistant(user_id)
+                automation_manager = TaskAutomationManager(user_id)
+
+                is_first_exchange = len(conversation.messages) == 0
+
+                # Save user message first
+                save_message_to_db(conversation_id, 'user', user_prompt)
+
+                # Load conversation history
+                history = [{'role': msg.role, 'parts': [{'text': msg.content}]} for msg in conversation.messages[:-1]]
+
+                # Initialize Gemini with better error handling
+                chat_session = initialize_gemini(history=history)
+                if not chat_session:
+                    error_msg = "AI service is currently unavailable. Please check your API configuration."
+                    yield f"data: {json.dumps({'text': error_msg})}\n\n"
+                    save_message_to_db(conversation_id, 'model', error_msg)
+                    return
+
+                # Prepare prompt parts
+                prompt_parts = []
+                if image_data:
+                    try:
+                        img = Image.open(io.BytesIO(image_data))
+                        prompt_parts.extend([user_prompt, img])
+                    except Exception as img_error:
+                        logging.error(f"Image processing error: {img_error}")
+                        prompt_parts.append(user_prompt)
+                else:
+                    prompt_parts.append(user_prompt)
+
+                # Generate response with error handling
+                try:
+                    stream_generator = get_response_stream(chat_session, prompt_parts)
+                    for chunk_text in stream_generator:
+                        if chunk_text:
+                            full_bot_response += chunk_text
+                            yield f"data: {json.dumps({'text': chunk_text})}\n\n"
+                except Exception as stream_error:
+                    logging.error(f"Streaming error: {stream_error}")
+                    error_response = "I apologize, but I encountered an error while generating a response. Please try again."
+                    full_bot_response = error_response
+                    yield f"data: {json.dumps({'text': error_response})}\n\n"
+
+                # Save bot response
+                if full_bot_response:
+                    save_message_to_db(conversation_id, 'model', full_bot_response)
+
+                # Update conversation title for first exchange
+                if is_first_exchange and full_bot_response:
+                    try:
+                        title = get_conversation_title(user_prompt, full_bot_response)
+                        if title:
+                            conversation.title = title
+                            db.session.commit()
+                    except Exception as title_error:
+                        logging.error(f"Title generation error: {title_error}")
+
+            except Exception as e:
+                logging.error(f"Error during response generation: {e}")
+                error_msg = "I apologize, but I encountered an error. Please try again."
+                yield f"data: {json.dumps({'text': error_msg})}\n\n"
+                save_message_to_db(conversation_id, 'model', error_msg)
+
+    return Response(generate_and_save(), mimetype='text/event-stream')
 
 # --- Main Application Entry Point ---
 if __name__ == "__main__":
